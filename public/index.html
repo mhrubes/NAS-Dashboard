@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domácí rozcestník</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --text:#1c1e21; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --ok:#16a34a; --off:#9ca3af; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111317; --card:#1b1e24; --text:#e8eaed; --muted:#9aa0a6; --line:#2b2f37; --accent:#5b8def; --ok:#4ade80; --off:#6b7280; --bad:#f0605d; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  [hidden] { display:none !important; }
+  main { max-width:1000px; margin:0 auto; padding:32px 16px 48px; }
+  button, input { font:inherit; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:7px 14px; cursor:pointer; transition:filter .15s; }
+  button:hover { filter:brightness(1.12); }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button.danger { background:var(--bad); }
+  button:focus-visible, input:focus-visible, a.card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+  header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:20px; }
+  h1 { margin:0; font-size:28px; }
+  .sub { color:var(--muted); margin-top:4px; }
+  h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:28px 0 12px; }
+
+  #bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; margin-bottom:8px; background:color-mix(in srgb, var(--accent) 12%, var(--card)); border:1px solid var(--accent); border-radius:10px; }
+  #bar strong { margin-right:auto; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px; }
+  a.card { position:relative; display:flex; flex-direction:column; gap:8px; padding:18px; background:var(--card); border:1px solid var(--line); border-radius:14px; color:inherit; text-decoration:none; transition:transform .15s, border-color .15s, box-shadow .15s; }
+  a.card:hover { transform:translateY(-2px); border-color:var(--accent); box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  .top { display:flex; align-items:center; gap:12px; }
+  .icon { font-size:30px; line-height:1; }
+  .name { font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--off); flex:none; }
+  .dot.on { background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.off { background:var(--bad); }
+  .desc { color:var(--muted); font-size:14px; }
+  .url { color:var(--accent); font-size:12px; word-break:break-all; margin-top:auto; }
+  .tools { display:flex; gap:6px; margin-top:6px; }
+  .tools button { padding:3px 9px; font-size:13px; }
+  .card.add { align-items:center; justify-content:center; min-height:140px; border-style:dashed; color:var(--accent); font-weight:600; cursor:pointer; }
+  .err { color:var(--bad); padding:16px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  footer { margin-top:36px; color:var(--muted); font-size:12px; }
+
+  dialog { border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); padding:0; width:min(92vw, 440px); box-shadow:0 20px 60px rgba(0,0,0,.35); }
+  dialog::backdrop { background:rgba(0,0,0,.5); backdrop-filter:blur(3px); }
+  dialog[open] { animation:pop .15s ease-out; }
+  @keyframes pop { from { opacity:0; transform:translateY(8px) scale(.97); } }
+  dialog form { padding:22px; display:grid; gap:12px; }
+  dialog h3 { margin:0; font-size:18px; }
+  #dlgText { margin:0; color:var(--muted); word-break:break-word; }
+  .fld { display:grid; gap:4px; font-size:13px; color:var(--muted); }
+  .fld input { padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); width:100%; font-size:15px; }
+  .fld small { font-size:12px; }
+  .chk { display:flex; align-items:center; gap:8px; font-size:14px; }
+  .dlgErr { color:var(--bad); font-size:14px; min-height:1.2em; }
+  .dlgActions { display:flex; justify-content:flex-end; gap:8px; }
+
+  #toasts { position:fixed; right:16px; bottom:16px; display:grid; gap:8px; z-index:10; max-width:calc(100vw - 32px); }
+  .toast { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); padding:10px 16px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.25); opacity:0; transform:translateY(8px); transition:.25s; }
+  .toast.show { opacity:1; transform:none; }
+  .toast.error { border-left-color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="title">Domácí rozcestník</h1>
+      <div class="sub" id="subtitle"></div>
+    </div>
+    <button class="ghost" id="editBtn" title="Upravit seznam aplikací">✎ Upravit</button>
+  </header>
+
+  <div id="bar" hidden>
+    <strong>Režim úprav</strong>
+    <button id="addBtn">+ Přidat aplikaci</button>
+    <button class="ghost" id="titleBtn">Nadpis</button>
+    <button class="ghost" id="doneBtn">Hotovo</button>
+    <button class="ghost" id="logoutBtn">Odhlásit</button>
+  </div>
+
+  <div id="content"></div>
+  <footer>Odkazy s <code>{host}</code> se otevřou na stejné adrese, přes kterou stránku vidíš (IP nebo název NASu).</footer>
+</main>
+
+<dialog id="dlg">
+  <form id="dlgForm">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgText" hidden></p>
+    <div id="dlgFields" style="display:grid;gap:12px"></div>
+    <div class="dlgErr" id="dlgErr"></div>
+    <div class="dlgActions">
+      <button type="button" class="ghost" id="dlgCancel">Zrušit</button>
+      <button type="submit" id="dlgOk">Uložit</button>
+    </div>
+  </form>
+</dialog>
+<div id="toasts"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const HOST = location.hostname || 'localhost';
+const fill = (u) => String(u || '').split('{host}').join(HOST);
+const isHttp = (u) => /^https?:\/\//i.test(u);
+
+let data = { title: '', subtitle: '', apps: [] };
+let authed = false;
+let editMode = false;
+let cards = [];
+
+// --- API ---
+async function api(url, opts = {}) {
+  const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(body.error || res.statusText); e.status = res.status; throw e; }
+  return body;
+}
+
+async function save(next) {
+  try {
+    data = await api('/api/apps', { method: 'PUT', body: JSON.stringify(next) });
+  } catch (err) {
+    if (err.status === 401) { authed = false; editMode = false; render(); toast('Platnost přihlášení vypršela', 'error'); }
+    throw err;
+  }
+  render();
+}
+
+function toast(msg, type = 'ok') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type; t.textContent = msg;
+  $('toasts').append(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, type === 'error' ? 5000 : 2200);
+}
+
+// --- jednotny dialog s formularem; onSubmit muze vyhodit chybu (zobrazi se, dialog zustane) ---
+function openForm({ title, text, fields = [], okText = 'Uložit', danger = false, onSubmit }) {
+  const dlg = $('dlg'), form = $('dlgForm'), ok = $('dlgOk');
+  $('dlgTitle').textContent = title;
+  $('dlgText').textContent = text || ''; $('dlgText').hidden = !text;
+  $('dlgErr').textContent = '';
+  ok.textContent = okText; ok.className = danger ? 'danger' : ''; ok.disabled = false;
+
+  const box = $('dlgFields'); box.textContent = '';
+  const inputs = {};
+  for (const f of fields) {
+    const wrap = document.createElement('label');
+    wrap.className = f.type === 'checkbox' ? 'chk' : 'fld';
+    const span = document.createElement('span'); span.textContent = f.label;
+    const inp = document.createElement('input');
+    inp.type = f.type || 'text'; inp.autocomplete = 'off';
+    if (f.type === 'checkbox') inp.checked = !!f.value; else inp.value = f.value ?? '';
+    if (f.placeholder) inp.placeholder = f.placeholder;
+    if (f.maxLength) inp.maxLength = f.maxLength;
+    if (f.required) inp.required = true;
+    if (f.type === 'checkbox') wrap.append(inp, span); else wrap.append(span, inp);
+    if (f.hint) { const s = document.createElement('small'); s.textContent = f.hint; wrap.append(s); }
+    box.append(wrap);
+    inputs[f.key] = inp;
+  }
+
+  return new Promise((resolve) => {
+    let done = false;
+    const close = (result) => { if (done) return; done = true; dlg.close(); resolve(result); };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const values = {};
+      for (const f of fields) values[f.key] = f.type === 'checkbox' ? inputs[f.key].checked : inputs[f.key].value.trim();
+      ok.disabled = true; $('dlgErr').textContent = '';
+      try { if (onSubmit) await onSubmit(values); close(true); }
+      catch (err) { $('dlgErr').textContent = err.message; ok.disabled = false; }
+    };
+    $('dlgCancel').onclick = () => close(false);
+    dlg.oncancel = (e) => { e.preventDefault(); close(false); }; // Esc
+    dlg.onclick = (e) => { if (e.target === dlg) close(false); }; // klik na pozadi
+    dlg.showModal();
+    const first = box.querySelector('input'); if (first) first.focus(); else ok.focus();
+  });
+}
+
+// --- dostupnost aplikaci ---
+function probe(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 2500);
+  return fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+    .then(() => true, () => false)
+    .finally(() => clearTimeout(t));
+}
+
+async function checkAll() {
+  await Promise.all(cards.filter((c) => c.check && isHttp(c.url)).map(async (c) => {
+    const ok = await probe(c.url);
+    c.dot.className = 'dot ' + (ok ? 'on' : 'off');
+    c.dot.title = ok ? 'Běží' : 'Nedostupná';
+  }));
+}
+
+// --- vykresleni ---
+function btn(label, cls, onClick) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.textContent = label; if (cls) b.className = cls;
+  b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); onClick(); };
+  return b;
+}
+
+function buildCard(app, index) {
+  const url = fill(app.url);
+  const a = document.createElement('a');
+  a.className = 'card';
+  a.rel = 'noopener';
+  if (editMode) { a.href = '#'; a.onclick = (e) => { e.preventDefault(); editApp(index); }; }
+  else a.href = isHttp(url) ? url : '#';
+
+  const top = document.createElement('div'); top.className = 'top';
+  const icon = document.createElement('div'); icon.className = 'icon'; icon.textContent = app.icon || '🔗';
+  const name = document.createElement('div'); name.className = 'name'; name.textContent = app.name;
+  const dot = document.createElement('span'); dot.className = 'dot'; dot.title = 'Stav neznámý';
+  top.append(icon, name);
+  if (app.check !== false) top.append(dot);
+
+  const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = app.description || '';
+  const link = document.createElement('div'); link.className = 'url'; link.textContent = url;
+  a.append(top, desc, link);
+
+  if (editMode) {
+    const tools = document.createElement('div'); tools.className = 'tools';
+    tools.append(
+      btn('Upravit', 'ghost', () => editApp(index)),
+      btn('↑', 'ghost', () => moveApp(index, -1)),
+      btn('↓', 'ghost', () => moveApp(index, 1)),
+      btn('Smazat', 'ghost', () => deleteApp(index)),
+    );
+    a.append(tools);
+  }
+  cards.push({ dot, url, check: app.check !== false });
+  return a;
+}
+
+function render() {
+  document.title = data.title || 'Domácí rozcestník';
+  $('title').textContent = data.title || 'Domácí rozcestník';
+  $('subtitle').textContent = data.subtitle || '';
+  $('bar').hidden = !editMode;
+  $('editBtn').hidden = editMode;
+
+  const content = $('content'); content.textContent = '';
+  cards = [];
+
+  const groups = new Map();
+  data.apps.forEach((app, i) => {
+    const g = app.group || '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push({ app, i });
+  });
+
+  for (const [group, items] of groups) {
+    if (group) { const h = document.createElement('h2'); h.textContent = group; content.append(h); }
+    const grid = document.createElement('div'); grid.className = 'grid';
+    for (const { app, i } of items) grid.append(buildCard(app, i));
+    content.append(grid);
+  }
+
+  if (editMode) {
+    const grid = document.createElement('div'); grid.className = 'grid'; grid.style.marginTop = '16px';
+    const add = document.createElement('a'); add.className = 'card add'; add.href = '#'; add.textContent = '+ Přidat aplikaci';
+    add.onclick = (e) => { e.preventDefault(); addApp(); };
+    grid.append(add); content.append(grid);
+  }
+  if (!data.apps.length && !editMode) {
+    const d = document.createElement('div'); d.className = 'err'; d.style.color = 'var(--muted)';
+    d.textContent = 'Zatím tu nejsou žádné aplikace. Klikni na „Upravit“ a přidej první.';
+    content.append(d);
+  }
+  checkAll();
+}
+
+// --- uprava ---
+const appFields = (a = {}) => [
+  { key: 'name', label: 'Název', value: a.name, required: true, maxLength: 60 },
+  { key: 'description', label: 'Popis', value: a.description, maxLength: 300 },
+  { key: 'url', label: 'URL', value: a.url, required: true, maxLength: 300, placeholder: 'http://{host}:3000', hint: 'Místo IP použij {host}, nahradí se adresou NASu.' },
+  { key: 'icon', label: 'Ikona (emoji)', value: a.icon, maxLength: 8, placeholder: '📦' },
+  { key: 'group', label: 'Skupina', value: a.group, maxLength: 40, placeholder: 'Aplikace' },
+  { key: 'check', label: 'Zobrazovat stav (zelená/červená tečka)', type: 'checkbox', value: a.check !== false },
+];
+
+const withApps = (fn) => { const next = structuredClone(data); fn(next.apps); return next; };
+
+async function addApp() {
+  await openForm({
+    title: 'Přidat aplikaci', fields: appFields(), okText: 'Přidat',
+    onSubmit: async (v) => { await save(withApps((apps) => apps.push(v))); toast('Aplikace přidána'); },
+  });
+}
+
+async function editApp(i) {
+  await openForm({
+    title: 'Upravit aplikaci', fields: appFields(data.apps[i]),
+    onSubmit: async (v) => { await save(withApps((apps) => { apps[i] = v; })); toast('Uloženo'); },
+  });
+}
+
+async function deleteApp(i) {
+  await openForm({
+    title: 'Smazat aplikaci?', text: `„${data.apps[i].name}“ bude odebrána z rozcestníku. Samotná aplikace zůstane na NASu beze změny.`,
+    okText: 'Smazat', danger: true,
+    onSubmit: async () => { await save(withApps((apps) => apps.splice(i, 1))); toast('Smazáno'); },
+  });
+}
+
+// presun v ramci stejne skupiny (prohodi se se sousedem)
+async function moveApp(i, dir) {
+  const g = data.apps[i].group || '';
+  let j = i + dir;
+  while (j >= 0 && j < data.apps.length && (data.apps[j].group || '') !== g) j += dir;
+  if (j < 0 || j >= data.apps.length) return;
+  try { await save(withApps((apps) => { [apps[i], apps[j]] = [apps[j], apps[i]]; })); }
+  catch (err) { toast(err.message, 'error'); }
+}
+
+$('titleBtn').onclick = () => openForm({
+  title: 'Nadpis stránky',
+  fields: [
+    { key: 'title', label: 'Nadpis', value: data.title, required: true, maxLength: 100 },
+    { key: 'subtitle', label: 'Podnadpis', value: data.subtitle, maxLength: 200 },
+  ],
+  onSubmit: async (v) => { const next = structuredClone(data); next.title = v.title; next.subtitle = v.subtitle; await save(next); toast('Uloženo'); },
+});
+
+$('editBtn').onclick = async () => {
+  if (!authed) {
+    const ok = await openForm({
+      title: 'Přihlášení', okText: 'Přihlásit',
+      fields: [{ key: 'password', label: 'Heslo', type: 'password', required: true }],
+      onSubmit: async (v) => { await api('/api/login', { method: 'POST', body: JSON.stringify({ password: v.password }) }); authed = true; },
+    });
+    if (!ok) return;
+  }
+  editMode = true; render();
+};
+$('doneBtn').onclick = () => { editMode = false; render(); };
+$('addBtn').onclick = addApp;
+$('logoutBtn').onclick = async () => {
+  await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
+  authed = false; editMode = false; render();
+};
+
+async function init() {
+  try {
+    data = await api('/api/apps');
+  } catch (err) {
+    const d = document.createElement('div'); d.className = 'err';
+    d.textContent = 'Nepodařilo se načíst seznam aplikací: ' + err.message;
+    $('content').append(d);
+    return;
+  }
+  authed = await api('/api/me').then(() => true, () => false);
+  render();
+  setInterval(checkAll, 30000);
+}
+init();
+</script>
+</body>
+</html>

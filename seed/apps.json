@@ -1,0 +1,34 @@
+{
+    "title": "Domácí rozcestník",
+    "subtitle": "Aplikace běžící na NASu",
+    "apps": [
+        {
+            "group": "Aplikace",
+            "name": "Faktura",
+            "description": "Evidence, tvorba a tisk faktur (PDF, QR platba). Data jsou v PostgreSQL na NASu.",
+            "url": "http://{host}:3000",
+            "icon": "🧾"
+        },
+        {
+            "group": "Aplikace",
+            "name": "NAS Files",
+            "description": "Soukromé úložiště souborů s přihlášením. Nahrávání, stahování, složky, přesouvání.",
+            "url": "http://{host}:3001",
+            "icon": "🗂️"
+        },
+        {
+            "group": "Síť a správa",
+            "name": "AdGuard Home",
+            "description": "Blokování reklam a trackerů v celé domácí síti. Statistiky DNS dotazů a seznamy blokování.",
+            "url": "http://{host}:8081",
+            "icon": "🛡️"
+        },
+        {
+            "group": "Síť a správa",
+            "name": "QNAP QTS",
+            "description": "Správa NASu: disky, sdílené složky, uživatelé, aplikace a Container Station.",
+            "url": "http://{host}:8080",
+            "icon": "🖥️"
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+# Domaci rozcestnik: stranka s odkazy na aplikace na NASu, upravy primo v prohlizeci.
+# Spusteni: docker compose up -d --build
+# Adresa:   http://IP_NAS:1000
+# Seznam aplikaci se uklada do ./data/apps.json (prezije aktualizace a restart).
+
+services:
+    dashboard:
+        build: .
+        container_name: nas-dashboard
+        restart: unless-stopped
+        env_file: .env
+        ports:
+            - '${APP_PORT:-1000}:3000'
+        volumes:
+            - ./data:/data
