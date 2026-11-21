@@ -13,7 +13,20 @@ const SEED_FILE = path.join(__dirname, 'seed', 'apps.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
-const SESSION_MS = 12 * 60 * 60 * 1000;
+// Odhlaseni po necinnosti: SESSION_TIMEOUT_MIN z .env (vychozi 5 minut, povolena i desetinna cisla)
+const DEFAULT_TIMEOUT_MIN = 5;
+const MAX_TIMEOUT_MIN = 24 * 60;
+function parseTimeoutMin(raw) {
+  if (raw === undefined || raw === '') return DEFAULT_TIMEOUT_MIN;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_TIMEOUT_MIN) {
+    console.warn(`Neplatna hodnota SESSION_TIMEOUT_MIN="${raw}", pouzivam ${DEFAULT_TIMEOUT_MIN} min`);
+    return DEFAULT_TIMEOUT_MIN;
+  }
+  return n;
+}
+const SESSION_TIMEOUT_MS = Math.round(parseTimeoutMin(process.env.SESSION_TIMEOUT_MIN) * 60 * 1000);
+const SESSION_GRACE_MS = 15 * 1000; // rezerva, aby server neodhlasil drive nez stranka (prodleva keepalive)
 const MAX_APPS = 100;
 const MAX_BODY = 128 * 1024;
 
@@ -29,7 +42,8 @@ const hashBuf = Buffer.from(hash, 'hex');
 const safeEqual = (a, b) => a.length === b.length && timingSafeEqual(a, b);
 const checkPassword = (pw) => safeEqual(scryptSync(String(pw ?? ''), salt, hashBuf.length), hashBuf);
 const sign = (exp) => createHmac('sha256', secret).update(String(exp)).digest('hex');
-const signToken = () => { const exp = Date.now() + SESSION_MS; return `${exp}.${sign(exp)}`; };
+const signToken = () => { const exp = Date.now() + SESSION_TIMEOUT_MS + SESSION_GRACE_MS; return `${exp}.${sign(exp)}`; };
+const authCookie = () => `auth=${signToken()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.ceil((SESSION_TIMEOUT_MS + SESSION_GRACE_MS) / 1000)}${COOKIE_SECURE ? '; Secure' : ''}`;
 function verifyToken(token) {
   const [exp, sig] = String(token ?? '').split('.');
   if (!exp || !sig || !(Number(exp) > Date.now())) return false;
@@ -77,6 +91,15 @@ function isAuthed(req) {
   const m = /(?:^|;\s*)auth=([^;]+)/.exec(req.headers.cookie || '');
   return !!m && verifyToken(m[1]);
 }
+
+// zbyvajici cas relace v sekundach (bez rezervy); 0 = vyprsela nebo neplatna
+function remainingSec(req) {
+  const m = /(?:^|;\s*)auth=([^;]+)/.exec(req.headers.cookie || '');
+  if (!m || !verifyToken(m[1])) return 0;
+  const exp = Number(m[1].split('.')[0]);
+  return Math.max(0, Math.floor((exp - SESSION_GRACE_MS - Date.now()) / 1000));
+}
+const timeoutSec = () => Math.round(SESSION_TIMEOUT_MS / 1000);
 function requireAuth(req) {
   if (!isAuthed(req)) throw new HttpError(401, 'Nepřihlášen');
 }
@@ -147,7 +170,17 @@ async function handleApi(req, res, p) {
 
   if (p === '/api/me' && method === 'GET') {
     requireAuth(req);
-    return sendJson(res, 200, { ok: true });
+    const remaining = remainingSec(req);
+    if (remaining <= 0) throw new HttpError(401, 'Nepřihlášen');
+    return sendJson(res, 200, { ok: true, timeoutSec: timeoutSec(), remainingSec: remaining });
+  }
+
+  // obnoveni relace pri aktivite uzivatele (klouzave odhlaseni po necinnosti)
+  if (p === '/api/keepalive' && method === 'POST') {
+    requireAuth(req);
+    if (remainingSec(req) <= 0) throw new HttpError(401, 'Nepřihlášen');
+    await readJson(req);
+    return sendJson(res, 200, { ok: true, timeoutSec: timeoutSec(), remainingSec: timeoutSec() }, { 'Set-Cookie': authCookie() });
   }
 
   if (p === '/api/login' && method === 'POST') {
@@ -162,8 +195,7 @@ async function handleApi(req, res, p) {
       throw new HttpError(401, 'Špatné heslo');
     }
     attempts.delete(ip);
-    const cookie = `auth=${signToken()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}${COOKIE_SECURE ? '; Secure' : ''}`;
-    return sendJson(res, 200, { ok: true }, { 'Set-Cookie': cookie });
+    return sendJson(res, 200, { ok: true, timeoutSec: timeoutSec(), remainingSec: timeoutSec() }, { 'Set-Cookie': authCookie() });
   }
 
   if (p === '/api/logout' && method === 'POST') {

@@ -23,7 +23,11 @@
   header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:20px; }
   h1 { margin:0; font-size:28px; }
   .sub { color:var(--muted); margin-top:4px; }
-  h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:28px 0 12px; }
+  h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0; }
+  .ghead { display:flex; align-items:center; gap:8px; margin:28px 0 12px; }
+  .ghead h2 { margin-right:auto; }
+  .ghead button { padding:3px 9px; font-size:13px; }
+  button:disabled { opacity:.4; cursor:default; filter:none; }
 
   #bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; margin-bottom:8px; background:color-mix(in srgb, var(--accent) 12%, var(--card)); border:1px solid var(--accent); border-radius:10px; }
   #bar strong { margin-right:auto; }
@@ -53,12 +57,26 @@
   dialog h3 { margin:0; font-size:18px; }
   #dlgText { margin:0; color:var(--muted); word-break:break-word; }
   .fld { display:grid; gap:4px; font-size:13px; color:var(--muted); }
-  .fld input { padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); width:100%; font-size:15px; }
+  .combo { position:relative; }
+  .clist { position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:5; margin:0; padding:4px; list-style:none; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.35); max-height:180px; overflow:auto; }
+  .clist li { padding:7px 10px; border-radius:6px; cursor:pointer; color:var(--text); font-size:14px; }
+  .clist li:hover, .clist li.active { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+  .clist li.new { color:var(--muted); font-style:italic; }
+  .fld input, .fld select { padding:9px 11px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); width:100%; font-size:15px; }
   .fld small { font-size:12px; }
   .chk { display:flex; align-items:center; gap:8px; font-size:14px; }
   .dlgErr { color:var(--bad); font-size:14px; min-height:1.2em; }
   .dlgActions { display:flex; justify-content:flex-end; gap:8px; }
 
+  #ring { position:fixed; left:16px; bottom:16px; width:60px; height:60px; border-radius:50%; background:var(--card); border:1px solid var(--line); box-shadow:0 6px 20px rgba(0,0,0,.25); display:grid; place-items:center; z-index:10; cursor:default; }
+  #ring svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+  #ring circle { fill:none; stroke-width:3; }
+  #ring .bg { stroke:var(--line); }
+  #ring .fg { stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset .9s linear, stroke .3s; }
+  #ring.warn .fg { stroke:#f59e0b; }
+  #ring.danger .fg { stroke:var(--bad); }
+  #ringText { position:relative; font-size:13px; font-variant-numeric:tabular-nums; font-weight:600; }
+  #ring.danger #ringText { color:var(--bad); }
   #toasts { position:fixed; right:16px; bottom:16px; display:grid; gap:8px; z-index:10; max-width:calc(100vw - 32px); }
   .toast { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); padding:10px 16px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.25); opacity:0; transform:translateY(8px); transition:.25s; }
   .toast.show { opacity:1; transform:none; }
@@ -99,6 +117,13 @@
     </div>
   </form>
 </dialog>
+<div id="ring" hidden title="Automatické odhlášení za nečinnost. Pohyb myší nebo psaní čas obnoví.">
+  <svg viewBox="0 0 44 44" aria-hidden="true">
+    <circle class="bg" cx="22" cy="22" r="19"></circle>
+    <circle class="fg" id="ringFg" cx="22" cy="22" r="19"></circle>
+  </svg>
+  <span id="ringText" role="timer" aria-live="off"></span>
+</div>
 <div id="toasts"></div>
 
 <script>
@@ -112,6 +137,66 @@ let authed = false;
 let editMode = false;
 let cards = [];
 
+// --- automaticke odhlaseni pri necinnosti (jako v bankovnich aplikacich) ---
+// Odpocet se pocita z casove znacky (deadline), ne z poctu tiku, takze je presny i v neaktivni zalozce.
+// Aktivita (mys, klavesnice, dotyk, scroll) odpocet vrati na plnou hodnotu; prepnuti jinam ho neresetuje.
+const RING_CIRC = 2 * Math.PI * 19;
+const KEEPALIVE_EVERY_MS = 10000;
+let timeoutMs = 0;
+let deadline = 0;
+let lastKeepalive = 0;
+let tickTimer = null;
+
+function startSession(timeoutSec, remainingSec) {
+  timeoutMs = timeoutSec * 1000;
+  deadline = Date.now() + remainingSec * 1000;
+  lastKeepalive = Date.now();
+  $('ring').hidden = false;
+  if (!tickTimer) tickTimer = setInterval(tick, 1000);
+  tick();
+}
+
+function endSession() {
+  clearInterval(tickTimer); tickTimer = null;
+  $('ring').hidden = true;
+}
+
+function tick() {
+  if (!authed) return;
+  const left = deadline - Date.now();
+  if (left <= 0) { sessionExpired(); return; }
+  const s = Math.ceil(left / 1000);
+  $('ringText').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  $('ringFg').style.strokeDasharray = RING_CIRC;
+  $('ringFg').style.strokeDashoffset = RING_CIRC * (1 - Math.min(1, left / timeoutMs));
+  $('ring').classList.toggle('warn', left <= 30000 && left > 10000);
+  $('ring').classList.toggle('danger', left <= 10000);
+}
+
+function sessionExpired() {
+  authed = false; editMode = false;
+  endSession();
+  if ($('dlg').open) $('dlgCancel').click(); // rozepsany formular se zavre
+  render();
+  api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
+  toast('Byl jsi odhlášen z důvodu nečinnosti', 'error');
+}
+
+function onActivity() {
+  if (!authed) return;
+  const now = Date.now();
+  if (now >= deadline) return; // vyprsela, rozhodne tick()
+  deadline = now + timeoutMs;
+  if (now - lastKeepalive >= KEEPALIVE_EVERY_MS) { // server obnovime nejvyse jednou za 10 s
+    lastKeepalive = now;
+    api('/api/keepalive', { method: 'POST', body: '{}' }).catch((err) => { if (err.status === 401) sessionExpired(); });
+  }
+}
+for (const ev of ['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel', 'scroll']) {
+  window.addEventListener(ev, onActivity, { passive: true, capture: true });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+
 // --- API ---
 async function api(url, opts = {}) {
   const res = await fetch(url, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
@@ -124,7 +209,7 @@ async function save(next) {
   try {
     data = await api('/api/apps', { method: 'PUT', body: JSON.stringify(next) });
   } catch (err) {
-    if (err.status === 401) { authed = false; editMode = false; render(); toast('Platnost přihlášení vypršela', 'error'); }
+    if (err.status === 401) { authed = false; editMode = false; endSession(); render(); toast('Platnost přihlášení vypršela', 'error'); }
     throw err;
   }
   render();
@@ -136,6 +221,82 @@ function toast(msg, type = 'ok') {
   $('toasts').append(t);
   requestAnimationFrame(() => t.classList.add('show'));
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, type === 'error' ? 5000 : 2200);
+}
+
+// --- naseptavac: klik/focus ukaze existujici hodnoty, psani filtruje, neexistujici text = nova hodnota ---
+const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); // "sit" najde "Síť"
+
+function attachCombo(wrap, inp, all) {
+  const box = document.createElement('div'); box.className = 'combo';
+  const list = document.createElement('ul'); list.className = 'clist'; list.hidden = true;
+  const status = document.createElement('small');
+  box.append(inp, list);
+  wrap.append(box, status);
+  inp.autocomplete = 'off';
+
+  let items = [];
+  let active = -1;
+
+  const updateStatus = () => {
+    const v = inp.value.trim();
+    status.textContent = !v ? 'Prázdné pole = bez skupiny'
+      : all.includes(v) ? 'Existující skupina'
+      : `Vytvoří se nová skupina „${v}“`;
+  };
+
+  const highlight = () => {
+    [...list.children].forEach((li, i) => li.classList.toggle('active', i === active));
+    list.children[active]?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const hide = () => { list.hidden = true; active = -1; };
+
+  const choose = (g) => {
+    inp.value = g;
+    inp.dispatchEvent(new Event('input', { bubbles: true })); // prepocita zavisla pole (pozice)
+    hide();
+  };
+
+  // showAll: pri kliknuti/focusu vsechny moznosti, pri psani jen odpovidajici
+  const render = (showAll) => {
+    const v = inp.value.trim();
+    const q = norm(v);
+    items = showAll || !q ? all.slice() : all.filter((g) => norm(g).includes(q));
+    list.textContent = '';
+    items.forEach((g) => {
+      const li = document.createElement('li');
+      li.textContent = g;
+      li.onmousedown = (e) => { e.preventDefault(); choose(g); }; // mousedown, aby input neztratil focus driv
+      list.append(li);
+    });
+    if (v && !all.includes(v)) {
+      const li = document.createElement('li');
+      li.className = 'new'; li.textContent = `＋ Nová skupina „${v}“`;
+      li.onmousedown = (e) => { e.preventDefault(); hide(); };
+      list.append(li);
+    }
+    active = -1;
+    list.hidden = list.children.length === 0;
+  };
+
+  inp.addEventListener('focus', () => render(true));
+  inp.addEventListener('click', () => render(true));
+  inp.addEventListener('input', () => { updateStatus(); render(false); });
+  inp.addEventListener('blur', hide);
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.hidden) { render(true); return; }
+      if (!items.length) return;
+      active = e.key === 'ArrowDown' ? Math.min(active + 1, items.length - 1) : Math.max(active - 1, 0);
+      highlight();
+    } else if (e.key === 'Enter' && !list.hidden && active >= 0) {
+      e.preventDefault(); choose(items[active]);
+    } else if (e.key === 'Escape' && !list.hidden) {
+      e.preventDefault(); e.stopPropagation(); hide(); // zavre jen seznam, ne cely dialog
+    }
+  });
+  updateStatus();
 }
 
 // --- jednotny dialog s formularem; onSubmit muze vyhodit chybu (zobrazi se, dialog zustane) ---
@@ -152,25 +313,51 @@ function openForm({ title, text, fields = [], okText = 'Uložit', danger = false
     const wrap = document.createElement('label');
     wrap.className = f.type === 'checkbox' ? 'chk' : 'fld';
     const span = document.createElement('span'); span.textContent = f.label;
-    const inp = document.createElement('input');
-    inp.type = f.type || 'text'; inp.autocomplete = 'off';
-    if (f.type === 'checkbox') inp.checked = !!f.value; else inp.value = f.value ?? '';
+    const isSelect = f.type === 'select';
+    const inp = document.createElement(isSelect ? 'select' : 'input');
+    inp.name = f.key;
+    if (!isSelect) { inp.type = f.type || 'text'; inp.autocomplete = 'off'; }
+    if (f.type === 'checkbox') inp.checked = !!f.value; else if (!isSelect) inp.value = f.value ?? '';
     if (f.placeholder) inp.placeholder = f.placeholder;
     if (f.maxLength) inp.maxLength = f.maxLength;
     if (f.required) inp.required = true;
     if (f.type === 'checkbox') wrap.append(inp, span); else wrap.append(span, inp);
+    if (f.type === 'combo') attachCombo(wrap, inp, f.options);
     if (f.hint) { const s = document.createElement('small'); s.textContent = f.hint; wrap.append(s); }
     box.append(wrap);
     inputs[f.key] = inp;
   }
+
+  // select (napr. pozice) se dopocitava z ostatnich poli a prepocita se pri zmene polí z dependsOn
+  const selects = fields.filter((f) => f.type === 'select');
+  const readValues = () => {
+    const v = {};
+    for (const f of fields) {
+      if (f.type === 'checkbox') v[f.key] = inputs[f.key].checked;
+      else if (f.type === 'select') v[f.key] = Number(inputs[f.key].value);
+      else v[f.key] = inputs[f.key].value.trim();
+    }
+    return v;
+  };
+  const refreshSelect = (f) => {
+    const spec = f.build(readValues());
+    const sel = inputs[f.key];
+    sel.textContent = '';
+    for (const o of spec.options) {
+      const opt = document.createElement('option');
+      opt.value = String(o.value); opt.textContent = o.label; sel.append(opt);
+    }
+    sel.value = String(spec.value);
+  };
+  selects.forEach(refreshSelect);
+  box.oninput = (e) => { for (const f of selects) if ((f.dependsOn || []).includes(e.target.name)) refreshSelect(f); };
 
   return new Promise((resolve) => {
     let done = false;
     const close = (result) => { if (done) return; done = true; dlg.close(); resolve(result); };
     form.onsubmit = async (e) => {
       e.preventDefault();
-      const values = {};
-      for (const f of fields) values[f.key] = f.type === 'checkbox' ? inputs[f.key].checked : inputs[f.key].value.trim();
+      const values = readValues();
       ok.disabled = true; $('dlgErr').textContent = '';
       try { if (onSubmit) await onSubmit(values); close(true); }
       catch (err) { $('dlgErr').textContent = err.message; ok.disabled = false; }
@@ -258,12 +445,25 @@ function render() {
     groups.get(g).push({ app, i });
   });
 
-  for (const [group, items] of groups) {
-    if (group) { const h = document.createElement('h2'); h.textContent = group; content.append(h); }
+  const order = [...groups.keys()];
+  order.forEach((group, gi) => {
+    const items = groups.get(group);
+    if (group || editMode) {
+      const head = document.createElement('div'); head.className = 'ghead';
+      const h = document.createElement('h2'); h.textContent = group || 'Bez skupiny';
+      head.append(h);
+      if (editMode) {
+        const up = btn('↑', 'ghost', () => moveGroup(group, -1)); up.disabled = gi === 0; up.title = 'Posunout celou skupinu nahoru';
+        const down = btn('↓', 'ghost', () => moveGroup(group, 1)); down.disabled = gi === order.length - 1; down.title = 'Posunout celou skupinu dolů';
+        head.append(up, down);
+        if (group) head.append(btn('Přejmenovat', 'ghost', () => renameGroup(group)));
+      }
+      content.append(head);
+    }
     const grid = document.createElement('div'); grid.className = 'grid';
     for (const { app, i } of items) grid.append(buildCard(app, i));
     content.append(grid);
-  }
+  });
 
   if (editMode) {
     const grid = document.createElement('div'); grid.className = 'grid'; grid.style.marginTop = '16px';
@@ -280,28 +480,74 @@ function render() {
 }
 
 // --- uprava ---
-const appFields = (a = {}) => [
+// existujici skupiny v poradi prvniho vyskytu (bez prazdne)
+function existingGroups() {
+  const out = [];
+  for (const a of data.apps) { const g = a.group || ''; if (g && !out.includes(g)) out.push(g); }
+  return out;
+}
+
+// moznosti pozice v ramci skupiny: 0 = na zacatek, n = na konec (oldIndex = upravovana polozka, -1 = nova)
+function positionOptions(group, oldIndex) {
+  const g = group || '';
+  const others = data.apps.filter((a, i) => i !== oldIndex && (a.group || '') === g);
+  const options = [];
+  if (!others.length) {
+    options.push({ value: 0, label: 'První v této skupině' });
+  } else {
+    others.forEach((a, k) => options.push({
+      value: k,
+      label: k === 0 ? `Na začátek (před „${a.name}“)` : `Za „${others[k - 1].name}“, před „${a.name}“`,
+    }));
+    options.push({ value: others.length, label: `Na konec (za „${others[others.length - 1].name}“)` });
+  }
+  let value = others.length; // nova polozka: na konec
+  if (oldIndex >= 0 && (data.apps[oldIndex].group || '') === g) {
+    value = data.apps.slice(0, oldIndex).filter((a) => (a.group || '') === g).length; // zustane na svem miste
+  }
+  return { options, value };
+}
+
+// vlozi polozku na pozici pos v ramci skupiny (ostatni se posunou), stara pozice se uvolni
+function placeApp(apps, app, oldIndex, pos) {
+  const list = apps.slice();
+  if (oldIndex >= 0) list.splice(oldIndex, 1);
+  const g = app.group || '';
+  const idxs = [];
+  list.forEach((a, i) => { if ((a.group || '') === g) idxs.push(i); });
+  let at;
+  if (!idxs.length) at = list.length;
+  else if (pos < idxs.length) at = idxs[Math.max(0, pos)];
+  else at = idxs[idxs.length - 1] + 1;
+  list.splice(at, 0, app);
+  return list;
+}
+
+const appFields = (a = {}, oldIndex = -1) => [
   { key: 'name', label: 'Název', value: a.name, required: true, maxLength: 60 },
   { key: 'description', label: 'Popis', value: a.description, maxLength: 300 },
   { key: 'url', label: 'URL', value: a.url, required: true, maxLength: 300, placeholder: 'http://{host}:3000', hint: 'Místo IP použij {host}, nahradí se adresou NASu.' },
   { key: 'icon', label: 'Ikona (emoji)', value: a.icon, maxLength: 8, placeholder: '📦' },
-  { key: 'group', label: 'Skupina', value: a.group, maxLength: 40, placeholder: 'Aplikace' },
+  { key: 'group', label: 'Skupina', type: 'combo', value: a.group ?? '', maxLength: 40,
+    options: existingGroups(), placeholder: 'Vyber ze seznamu nebo napiš novou' },
+  { key: 'position', label: 'Pozice ve skupině', type: 'select', dependsOn: ['group'], build: (v) => positionOptions(v.group, oldIndex) },
   { key: 'check', label: 'Zobrazovat stav (zelená/červená tečka)', type: 'checkbox', value: a.check !== false },
 ];
 
-const withApps = (fn) => { const next = structuredClone(data); fn(next.apps); return next; };
+const withList = (fn) => { const next = structuredClone(data); next.apps = fn(next.apps); return next; };
+const withApps = (fn) => withList((apps) => { fn(apps); return apps; });
 
 async function addApp() {
   await openForm({
     title: 'Přidat aplikaci', fields: appFields(), okText: 'Přidat',
-    onSubmit: async (v) => { await save(withApps((apps) => apps.push(v))); toast('Aplikace přidána'); },
+    onSubmit: async ({ position, ...app }) => { await save(withList((apps) => placeApp(apps, app, -1, position))); toast('Aplikace přidána'); },
   });
 }
 
 async function editApp(i) {
   await openForm({
-    title: 'Upravit aplikaci', fields: appFields(data.apps[i]),
-    onSubmit: async (v) => { await save(withApps((apps) => { apps[i] = v; })); toast('Uloženo'); },
+    title: 'Upravit aplikaci', fields: appFields(data.apps[i], i),
+    onSubmit: async ({ position, ...app }) => { await save(withList((apps) => placeApp(apps, app, i, position))); toast('Uloženo'); },
   });
 }
 
@@ -310,6 +556,29 @@ async function deleteApp(i) {
     title: 'Smazat aplikaci?', text: `„${data.apps[i].name}“ bude odebrána z rozcestníku. Samotná aplikace zůstane na NASu beze změny.`,
     okText: 'Smazat', danger: true,
     onSubmit: async () => { await save(withApps((apps) => apps.splice(i, 1))); toast('Smazáno'); },
+  });
+}
+
+// presun cele skupiny: poradi skupin = poradi prvniho vyskytu, pole se slozi podle noveho poradi
+async function moveGroup(group, dir) {
+  const order = [];
+  for (const a of data.apps) { const g = a.group || ''; if (!order.includes(g)) order.push(g); }
+  const i = order.indexOf(group);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  try { await save(withList((apps) => order.flatMap((g) => apps.filter((a) => (a.group || '') === g)))); }
+  catch (err) { toast(err.message, 'error'); }
+}
+
+async function renameGroup(group) {
+  await openForm({
+    title: 'Přejmenovat skupinu', okText: 'Přejmenovat',
+    fields: [{ key: 'name', label: 'Název skupiny', value: group, maxLength: 40 }],
+    onSubmit: async (v) => {
+      await save(withList((apps) => apps.map((a) => ((a.group || '') === group ? { ...a, group: v.name } : a))));
+      toast('Skupina přejmenována');
+    },
   });
 }
 
@@ -337,7 +606,10 @@ $('editBtn').onclick = async () => {
     const ok = await openForm({
       title: 'Přihlášení', okText: 'Přihlásit',
       fields: [{ key: 'password', label: 'Heslo', type: 'password', required: true }],
-      onSubmit: async (v) => { await api('/api/login', { method: 'POST', body: JSON.stringify({ password: v.password }) }); authed = true; },
+      onSubmit: async (v) => {
+        const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: v.password }) });
+        authed = true; startSession(r.timeoutSec, r.remainingSec);
+      },
     });
     if (!ok) return;
   }
@@ -347,7 +619,7 @@ $('doneBtn').onclick = () => { editMode = false; render(); };
 $('addBtn').onclick = addApp;
 $('logoutBtn').onclick = async () => {
   await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
-  authed = false; editMode = false; render();
+  authed = false; editMode = false; endSession(); render();
 };
 
 async function init() {
@@ -359,7 +631,9 @@ async function init() {
     $('content').append(d);
     return;
   }
-  authed = await api('/api/me').then(() => true, () => false);
+  const me = await api('/api/me').catch(() => null);
+  authed = !!me;
+  if (me) startSession(me.timeoutSec, me.remainingSec);
   render();
   setInterval(checkAll, 30000);
 }
