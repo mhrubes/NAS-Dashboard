@@ -39,6 +39,7 @@
   .icon { font-size:30px; line-height:1; }
   .name { font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .hbtns { display:flex; gap:8px; }
+  #refreshBtn { min-width:40px; font-variant-numeric:tabular-nums; } /* odpocet nesmi menit sirku tlacitka */
   .dot { width:10px; height:10px; border-radius:50%; background:var(--off); flex:none; transition:background .25s, box-shadow .25s; }
   /* bezici aplikace: zelena tecka jemne pulzuje (vlna se rozbiha a miji) */
   .dot.on { background:var(--ok); box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); animation:pulse 2s ease-out infinite; }
@@ -54,7 +55,11 @@
   .desc { color:var(--muted); font-size:14px; }
   .url { color:var(--accent); font-size:12px; word-break:break-all; margin-top:auto; }
   .tools { display:flex; gap:6px; margin-top:6px; }
+  .tools { flex-wrap:wrap; }
   .tools button { padding:3px 9px; font-size:13px; }
+  .card.is-hidden { opacity:.55; border-style:dashed; }
+  .card.is-hidden:hover { opacity:.9; }
+  .hidbadge { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; flex:none; }
   .card.add { align-items:center; justify-content:center; min-height:140px; border-style:dashed; color:var(--accent); font-weight:600; cursor:pointer; }
   .err { color:var(--bad); padding:16px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
   footer { margin-top:36px; color:var(--muted); font-size:12px; }
@@ -191,6 +196,7 @@ function sessionExpired() {
   endSession();
   if ($('dlg').open) $('dlgCancel').click(); // rozepsany formular se zavre
   render();
+  reloadApps().then(render); // skryte aplikace zmizi i z pameti stranky
   api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
   toast('Byl jsi odhlášen z důvodu nečinnosti', 'error');
 }
@@ -222,7 +228,7 @@ async function save(next) {
   try {
     data = await api('/api/apps', { method: 'PUT', body: JSON.stringify(next) });
   } catch (err) {
-    if (err.status === 401) { authed = false; editMode = false; endSession(); render(); toast('Platnost přihlášení vypršela', 'error'); }
+    if (err.status === 401) { authed = false; editMode = false; endSession(); render(); reloadApps().then(render); toast('Platnost přihlášení vypršela', 'error'); }
     throw err;
   }
   render();
@@ -418,6 +424,31 @@ async function checkAll() {
   } finally { checking = false; }
 }
 
+// rucni obnoveni stavu (tlacitko ↻): po kliknuti je tlacitko X sekund neaktivni a ukazuje odpocet
+const REFRESH_COOLDOWN_SEC = 10;
+let refreshUntil = 0;
+let refreshTimer = null;
+
+function manualRefresh() {
+  if (Date.now() < refreshUntil) return;
+  refreshUntil = Date.now() + REFRESH_COOLDOWN_SEC * 1000;
+  checkAll();
+  const b = $('refreshBtn');
+  b.disabled = true;
+  const tick = () => { // odpocet z casove znacky, takze je presny i ve skryte zalozce
+    const left = Math.ceil((refreshUntil - Date.now()) / 1000);
+    if (left <= 0) {
+      clearInterval(refreshTimer); refreshTimer = null;
+      b.disabled = false; b.textContent = '↻'; b.title = 'Zkontrolovat stav aplikací teď';
+      return;
+    }
+    b.textContent = String(left);
+    b.title = `Další ruční kontrola za ${left} s`;
+  };
+  tick();
+  refreshTimer = setInterval(tick, 250);
+}
+
 // --- vykresleni ---
 function btn(label, cls, onClick) {
   const b = document.createElement('button');
@@ -429,7 +460,7 @@ function btn(label, cls, onClick) {
 function buildCard(app, index) {
   const url = fill(app.url);
   const a = document.createElement('a');
-  a.className = 'card';
+  a.className = 'card' + (app.visible === false ? ' is-hidden' : ''); // skryta karta je v rezimu uprav ztlumena
   a.rel = 'noopener';
   if (editMode) { a.href = '#'; a.onclick = (e) => { e.preventDefault(); editApp(index); }; }
   else a.href = isHttp(url) ? url : '#';
@@ -439,6 +470,11 @@ function buildCard(app, index) {
   const name = document.createElement('div'); name.className = 'name'; name.textContent = app.name;
   const dot = document.createElement('span'); dot.className = 'dot'; dot.title = 'Stav neznámý';
   top.append(icon, name);
+  if (app.visible === false) {
+    const hid = document.createElement('span'); hid.className = 'hidbadge'; hid.textContent = 'Skrytá';
+    hid.title = 'Běžní uživatelé tuto aplikaci nevidí';
+    top.append(hid);
+  }
   if (app.check !== false) top.append(dot);
 
   const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = app.description || '';
@@ -451,6 +487,7 @@ function buildCard(app, index) {
       btn('Upravit', 'ghost', () => editApp(index)),
       btn('↑', 'ghost', () => moveApp(index, -1)),
       btn('↓', 'ghost', () => moveApp(index, 1)),
+      btn(app.visible === false ? 'Zobrazit' : 'Skrýt', 'ghost', () => toggleVisible(index)),
       btn('Smazat', 'ghost', () => deleteApp(index)),
     );
     a.append(tools);
@@ -469,8 +506,11 @@ function render() {
   const content = $('content'); content.textContent = '';
   cards = [];
 
+  // bezny pohled (i prihlaseny mimo rezim uprav) ukazuje jen aplikace s visible != false; skryte vidi jen rezim uprav
+  const shown = (app) => editMode || app.visible !== false;
   const groups = new Map();
   data.apps.forEach((app, i) => {
+    if (!shown(app)) return;
     const g = app.group || '';
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push({ app, i });
@@ -502,9 +542,11 @@ function render() {
     add.onclick = (e) => { e.preventDefault(); addApp(); };
     grid.append(add); content.append(grid);
   }
-  if (!data.apps.length && !editMode) {
+  if (!editMode && !data.apps.some(shown)) {
     const d = document.createElement('div'); d.className = 'err'; d.style.color = 'var(--muted)';
-    d.textContent = 'Zatím tu nejsou žádné aplikace. Klikni na „Upravit“ a přidej první.';
+    d.textContent = data.apps.length
+      ? 'Žádné aplikace nejsou zobrazené. Klikni na „Upravit“ a některou zobraz.'
+      : 'Zatím tu nejsou žádné aplikace. Klikni na „Upravit“ a přidej první.';
     content.append(d);
   }
   checkAll();
@@ -562,6 +604,7 @@ const appFields = (a = {}, oldIndex = -1) => [
   { key: 'group', label: 'Skupina', type: 'combo', value: a.group ?? '', maxLength: 40,
     options: existingGroups(), placeholder: 'Vyber ze seznamu nebo napiš novou' },
   { key: 'position', label: 'Pozice ve skupině', type: 'select', dependsOn: ['group'], build: (v) => positionOptions(v.group, oldIndex) },
+  { key: 'visible', label: 'Zobrazit na rozcestníku (skryté vidí jen přihlášený)', type: 'checkbox', value: a.visible !== false }, // nova aplikace je viditelna
   { key: 'check', label: 'Zobrazovat stav (zelená/červená tečka)', type: 'checkbox', value: a.check !== false },
 ];
 
@@ -613,6 +656,15 @@ async function renameGroup(group) {
   });
 }
 
+// zobrazit / skryt aplikaci pro bezne uzivatele (jeden klik, uklada se hned)
+async function toggleVisible(i) {
+  const hide = data.apps[i].visible !== false;
+  try {
+    await save(withApps((apps) => { apps[i] = { ...apps[i], visible: !hide }; }));
+    toast(hide ? 'Skryto pro běžné uživatele' : 'Zobrazeno všem');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 // presun v ramci stejne skupiny (prohodi se se sousedem)
 async function moveApp(i, dir) {
   const g = data.apps[i].group || '';
@@ -640,17 +692,24 @@ $('editBtn').onclick = async () => {
       onSubmit: async (v) => {
         const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ password: v.password }) });
         authed = true; startSession(r.timeoutSec, r.remainingSec);
+        await reloadApps(); // prihlaseny dostane i skryte aplikace
       },
     });
     if (!ok) return;
   }
   editMode = true; render();
 };
+
+// seznam se nacita znovu pri zmene prihlaseni: server vraci neprihlasenemu jen viditelne aplikace
+async function reloadApps() {
+  try { data = await api('/api/apps'); } catch { /* ponechat stavajici data */ }
+}
 $('doneBtn').onclick = () => { editMode = false; render(); };
 $('addBtn').onclick = addApp;
 $('logoutBtn').onclick = async () => {
   await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
-  authed = false; editMode = false; endSession(); render();
+  authed = false; editMode = false; endSession();
+  await reloadApps(); render();
 };
 
 async function init() {
@@ -671,7 +730,7 @@ async function init() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) checkAll(); });
   window.addEventListener('focus', checkAll);
   window.addEventListener('online', checkAll);
-  $('refreshBtn').onclick = checkAll;
+  $('refreshBtn').onclick = manualRefresh;
 }
 init();
 </script>

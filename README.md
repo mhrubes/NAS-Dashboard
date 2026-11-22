@@ -25,11 +25,19 @@ docker compose up -d --build
 
 Stránka běží na `http://IP_NAS:1000`. Heslo `SilneHeslo` nahraď vlastním, slouží jen pro úpravy.
 
+## Viditelnost aplikací
+
+Každá aplikace má příznak `"visible"` (výchozí `true`, tedy i u nově přidané). Skrytá aplikace (`false`) se **běžným uživatelům vůbec nezobrazí a server ji ani neposílá**: nepřihlášený `GET /api/apps` vrací jen viditelné. Název, popis ani URL skryté aplikace se tedy z prohlížeče nezjistí.
+
+- V režimu úprav jsou vidět všechny aplikace, skryté jsou ztlumené se štítkem „Skrytá“. Tlačítko **Skrýt / Zobrazit** na kartě přepne viditelnost jedním klikem, ve formuláři je zaškrtávátko „Zobrazit na rozcestníku“.
+- Po **Hotovo** vidí i přihlášený jen viditelné aplikace, tedy stránku tak, jak ji vidí ostatní. Skupina, ve které jsou všechny aplikace skryté, se nezobrazí vůbec.
+- Pokud jsou všechny aplikace skryté, běžný uživatel uvidí hlášku „Žádné aplikace nejsou zobrazené“.
+
 ## Úprava seznamu v prohlížeči
 
 1. Klikni na **✎ Upravit** a přihlas se.
 2. **+ Přidat aplikaci**: název, popis, URL, ikona (emoji), skupina (po kliknutí se nabídnou existující, při psaní se filtrují, nový název vytvoří novou skupinu) a **pozice ve skupině** (na začátek, mezi dvě konkrétní aplikace nebo na konec).
-3. Na kartě: **Upravit** (stejný formulář i s pozicí a skupinou, ostatní karty se podle toho posunou), **↑ / ↓** (rychlý posun o jedno místo), **Smazat**.
+3. Na kartě: **Upravit** (stejný formulář i s pozicí a skupinou, ostatní karty se podle toho posunou), **↑ / ↓** (rychlý posun o jedno místo), **Skrýt / Zobrazit**, **Smazat**.
 4. U názvu skupiny: **↑ / ↓** posune celou skupinu (sekci) i s kartami, **Přejmenovat** změní její název.
 5. **Nadpis** změní titulek a podtitulek stránky. **Hotovo** režim úprav ukončí.
 
@@ -59,8 +67,8 @@ Prohlížeč každých 30 s zkusí otevřít spojení na adresu aplikace. Zelen�
 
 | Metoda | Cesta | Přístup | Popis |
 |---|---|---|---|
-| GET | `/api/apps` | veřejné | seznam aplikací |
-| PUT | `/api/apps` | přihlášení | uložení celého seznamu (validace názvu, URL, délek) |
+| GET | `/api/apps` | veřejné | seznam aplikací (nepřihlášenému jen s `visible != false`, přihlášenému všechny) |
+| PUT | `/api/apps` | přihlášení | uložení celého seznamu (validace názvu, URL, délek; `visible` je boolean, výchozí `true`) |
 | POST | `/api/login` | veřejné | `{password}`, nastaví cookie, max. 5 pokusů / 15 min |
 | POST | `/api/logout` | veřejné | smaže cookie |
 | GET | `/api/me` | přihlášení | kontrola relace, vrací `timeoutSec` a `remainingSec` |

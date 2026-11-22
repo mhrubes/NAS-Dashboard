@@ -131,6 +131,7 @@ function validateData(d) {
       icon: checkString(a.icon, 'Ikona', 8),
       group: checkString(a.group, 'Skupina', 40),
       check: a.check !== false,
+      visible: typeof a.visible === 'boolean' ? a.visible : true, // vychozi: viditelna (i u nove aplikace)
     };
   });
 
@@ -165,7 +166,10 @@ async function handleApi(req, res, p) {
   if (p === '/api/health' && method === 'GET') return sendJson(res, 200, { ok: true });
 
   if (p === '/api/apps' && method === 'GET') {
-    return sendJson(res, 200, JSON.parse(await fsp.readFile(DATA_FILE, 'utf8')));
+    const data = JSON.parse(await fsp.readFile(DATA_FILE, 'utf8'));
+    // skryte aplikace (visible: false) se neprihlasenemu vubec neposilaji, ne jen nezobrazi
+    if (remainingSec(req) <= 0) data.apps = (data.apps || []).filter((a) => a.visible !== false);
+    return sendJson(res, 200, data);
   }
 
   if (p === '/api/me' && method === 'GET') {
