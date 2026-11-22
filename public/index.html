@@ -63,6 +63,7 @@
   .card.add { align-items:center; justify-content:center; min-height:140px; border-style:dashed; color:var(--accent); font-weight:600; cursor:pointer; }
   .err { color:var(--bad); padding:16px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
   footer { margin-top:36px; color:var(--muted); font-size:12px; }
+  .ver { margin-top:6px; opacity:.8; font-variant-numeric:tabular-nums; }
 
   dialog { border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--text); padding:0; width:min(92vw, 440px); box-shadow:0 20px 60px rgba(0,0,0,.35); }
   dialog::backdrop { background:rgba(0,0,0,.5); backdrop-filter:blur(3px); }
@@ -120,7 +121,9 @@
   </div>
 
   <div id="content"></div>
-  <footer>Odkazy s <code>{host}</code> se otevřou na stejné adrese, přes kterou stránku vidíš (IP nebo název NASu).</footer>
+  <footer>Odkazy s <code>{host}</code> se otevřou na stejné adrese, přes kterou stránku vidíš (IP nebo název NASu).
+    <div class="ver" id="ver" title="Verze aplikace (z package.json)"></div>
+  </footer>
 </main>
 
 <dialog id="dlg">
@@ -713,6 +716,8 @@ $('logoutBtn').onclick = async () => {
 };
 
 async function init() {
+  // verze z package.json (pres /api/health); chyba nesmi rozbit stranku
+  api('/api/health').then((h) => { if (h.version) $('ver').textContent = 'NAS Dashboard v' + h.version; }).catch(() => {});
   try {
     data = await api('/api/apps');
   } catch (err) {

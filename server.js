@@ -6,6 +6,9 @@ const fsp = fs.promises;
 const path = require('path');
 const { scryptSync, timingSafeEqual, createHmac } = require('crypto');
 
+// verze aplikace je jediny zdroj pravdy v package.json (zobrazuje se na strance a vraci /api/health)
+const APP_VERSION = require('./package.json').version;
+
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
 const DATA_FILE = path.join(DATA_DIR, 'apps.json');
@@ -163,7 +166,7 @@ const BLOCK_MS = 15 * 60 * 1000;
 async function handleApi(req, res, p) {
   const method = req.method;
 
-  if (p === '/api/health' && method === 'GET') return sendJson(res, 200, { ok: true });
+  if (p === '/api/health' && method === 'GET') return sendJson(res, 200, { ok: true, version: APP_VERSION });
 
   if (p === '/api/apps' && method === 'GET') {
     const data = JSON.parse(await fsp.readFile(DATA_FILE, 'utf8'));
@@ -258,7 +261,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 ensureData().then(() => {
-  server.listen(PORT, () => console.log(`nas-dashboard listening on :${PORT}, data ${DATA_DIR}`));
+  server.listen(PORT, () => console.log(`nas-dashboard v${APP_VERSION} listening on :${PORT}, data ${DATA_DIR}`));
 }).catch((err) => {
   console.error('Startup failed: ', err);
   process.exit(1);

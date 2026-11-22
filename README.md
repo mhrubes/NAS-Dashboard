@@ -73,7 +73,7 @@ Prohlížeč každých 30 s zkusí otevřít spojení na adresu aplikace. Zelen�
 | POST | `/api/logout` | veřejné | smaže cookie |
 | GET | `/api/me` | přihlášení | kontrola relace, vrací `timeoutSec` a `remainingSec` |
 | POST | `/api/keepalive` | přihlášení | obnoví relaci při aktivitě uživatele |
-| GET | `/api/health` | veřejné | healthcheck |
+| GET | `/api/health` | veřejné | healthcheck, vrací `{ok, version}` |
 
 ## ENV
 
@@ -86,6 +86,16 @@ Prohlížeč každých 30 s zkusí otevřít spojení na adresu aplikace. Zelen�
 | `COOKIE_SECURE` | `true` za HTTPS |
 | `TRUST_PROXY` | `true` za reverzní proxy |
 | `DATA_DIR` | složka s `apps.json` (v kontejneru `/data`) |
+
+## Verze
+
+Verze aplikace je jen v `package.json` (`"version"`). Zobrazuje se v patičce stránky („NAS Dashboard v1.1.0“), vypisuje ji server při startu a vrací ji `GET /api/health`. Zvýšit ji jde bez ruční úpravy souboru:
+
+```sh
+npm version patch --no-git-tag-version   # 1.1.0 -> 1.1.1 (minor: nové funkce, major: nekompatibilní změna)
+```
+
+Po zvýšení stačí commit, na NASu `git pull` a `docker compose up -d --build`. Podle čísla v patičce poznáš, která verze na NASu opravdu běží.
 
 ## Aktualizace
 
