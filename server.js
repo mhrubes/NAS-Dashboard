@@ -127,10 +127,17 @@ function validateData(d) {
     const url = checkString(a.url, 'URL', 300, { required: true });
     if (!/^https?:\/\//i.test(url)) throw new HttpError(400, 'URL musí začínat http:// nebo https://');
     try { new URL(url.split('{host}').join('example')); } catch { throw new HttpError(400, 'URL není platná'); }
+    // externi adresa je nepovinna; je-li vyplnena, musi byt platne http(s)
+    const urlExternal = checkString(a.urlExternal, 'Externí adresa', 300);
+    if (urlExternal) {
+      if (!/^https?:\/\//i.test(urlExternal)) throw new HttpError(400, 'Externí adresa musí začínat http:// nebo https://');
+      try { new URL(urlExternal.split('{host}').join('example')); } catch { throw new HttpError(400, 'Externí adresa není platná'); }
+    }
     return {
       name: checkString(a.name, 'Název', 60, { required: true }),
       description: checkString(a.description, 'Popis', 300),
       url,
+      urlExternal,
       icon: checkString(a.icon, 'Ikona', 8),
       group: checkString(a.group, 'Skupina', 40),
       check: a.check !== false,

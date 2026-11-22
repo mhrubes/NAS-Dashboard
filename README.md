@@ -39,7 +39,14 @@ Každá aplikace má příznak `"visible"` (výchozí `true`, tedy i u nově př
 2. **+ Přidat aplikaci**: název, popis, URL, ikona (emoji), skupina (po kliknutí se nabídnou existující, při psaní se filtrují, nový název vytvoří novou skupinu) a **pozice ve skupině** (na začátek, mezi dvě konkrétní aplikace nebo na konec).
 3. Na kartě: **Upravit** (stejný formulář i s pozicí a skupinou, ostatní karty se podle toho posunou), **↑ / ↓** (rychlý posun o jedno místo), **Skrýt / Zobrazit**, **Smazat**.
 4. U názvu skupiny: **↑ / ↓** posune celou skupinu (sekci) i s kartami, **Přejmenovat** změní její název.
-5. **Nadpis** změní titulek a podtitulek stránky. **Hotovo** režim úprav ukončí.
+5. **Přeřazení tažením:** kartu chytni myší a pusť ji **před nebo za jinou kartu** (podle toho, ve které polovině karty ji pustíš; karta přejde i do skupiny cílové karty), na **nadpis skupiny** (na začátek skupiny) nebo na **volné místo skupiny** (na její konec). Tlačítka ↑ / ↓ zůstávají pro dotyková zařízení.
+6. **Export** stáhne celý seznam (včetně skrytých aplikací) jako JSON, **Import** ho načte ze souboru: buď **přidá** jen nové aplikace (shoda podle názvu a adresy se přeskočí), nebo **nahradí** celý seznam. Obsah souboru se při uložení ověří stejně jako ruční úpravy.
+7. **Nadpis** změní titulek a podtitulek stránky. **Hotovo** režim úprav ukončí.
+
+### Hledání a skupiny
+
+- Pole **Hledat** v hlavičce filtruje karty podle názvu, popisu, skupiny i adresy bez ohledu na diakritiku a velikost písmen. Klávesa **`/`** do něj skočí odkudkoli, **Enter** otevře první nález, **Esc** hledání smaže.
+- Skupinu **sbalíš** kliknutím na její nadpis (u sbalené je vidět počet karet). Stav se pamatuje v prohlížeči. Při hledání se skupiny s nálezy rozbalí samy.
 
 Změny se ukládají hned do `data/apps.json` na NASu (přežijí restart i aktualizaci). Při prvním startu se vytvoří výchozí seznam ze `seed/apps.json`.
 
@@ -53,6 +60,15 @@ http://{host}:3000
 
 Povolené jsou jen odkazy `http://` a `https://`.
 
+### Domácí a externí adresa
+
+Každá aplikace může mít kromě hlavní adresy (`url`) i **externí adresu** (`urlExternal`, nepovinná), třeba `https://faktura.example.com`. Která se použije, rozhoduje adresa, přes kterou stránku otevřeš:
+
+- **domácí síť** (použije se `url`): `localhost`, soukromé IP (`10.x`, `192.168.x`, `172.16–31.x`, `169.254.x`), IPv6 `::1`, `fc00::/7` a `fe80::`, názvy končící `.local`, `.lan`, `.home`, `.internal`, `.home.arpa` a jednoslovné názvy (např. `nas`),
+- **jinde** (veřejný název nebo IP): použije se `urlExternal`, a pokud není vyplněná, tak `url`.
+
+Stav (tečka) se zjišťuje na adrese, která se právě používá. V režimu úprav je u karty vidět i externí adresa.
+
 ## Automatické odhlášení při nečinnosti
 
 Po přihlášení se vlevo dole zobrazí kolečko s odpočtem (min:s). Každou sekundu nečinnosti ubývá, i když přepneš na jinou záložku nebo okno. Pohyb myší, psaní, kliknutí, dotyk nebo scroll odpočet vrátí na plnou hodnotu `SESSION_TIMEOUT_MIN`. Posledních 30 s kolečko zežloutne, posledních 10 s zčervená. Po vypršení tě stránka odhlásí a zavře rozepsaný formulář.
@@ -61,7 +77,7 @@ Odpočet se počítá z časové značky, takže je přesný i v neaktivní zál
 
 ## Tečka se stavem
 
-Prohlížeč každých 30 s zkusí otevřít spojení na adresu aplikace. Zelená = port odpovídá, červená = ne. Neověřuje funkčnost aplikace, jen dostupnost portu. U karty jde vypnout (zaškrtávátko ve formuláři).
+Prohlížeč každých 5 s (jen když je záložka vidět) zkusí otevřít spojení na adresu aplikace. Zelená pulzující tečka = port odpovídá, červená = ne. U zelené je vidět **doba odezvy** (např. `23 ms`), po najetí na tečku i čas poslední kontroly. Tlačítko ↻ zkontroluje stav hned (poté 10 s odpočet). Neověřuje funkčnost aplikace, jen dostupnost portu. U karty jde vypnout (zaškrtávátko ve formuláři).
 
 ## API
 
@@ -89,10 +105,10 @@ Prohlížeč každých 30 s zkusí otevřít spojení na adresu aplikace. Zelen�
 
 ## Verze
 
-Verze aplikace je jen v `package.json` (`"version"`). Zobrazuje se v patičce stránky („NAS Dashboard v1.1.0“), vypisuje ji server při startu a vrací ji `GET /api/health`. Zvýšit ji jde bez ruční úpravy souboru:
+Verze aplikace je jen v `package.json` (`"version"`). Zobrazuje se v patičce stránky („NAS Dashboard v1.2.0“), vypisuje ji server při startu a vrací ji `GET /api/health`. Zvýšit ji jde bez ruční úpravy souboru:
 
 ```sh
-npm version patch --no-git-tag-version   # 1.1.0 -> 1.1.1 (minor: nové funkce, major: nekompatibilní změna)
+npm version patch --no-git-tag-version   # 1.2.0 -> 1.2.1 (minor: nové funkce, major: nekompatibilní změna)
 ```
 
 Po zvýšení stačí commit, na NASu `git pull` a `docker compose up -d --build`. Podle čísla v patičce poznáš, která verze na NASu opravdu běží.

@@ -38,7 +38,21 @@
   .top { display:flex; align-items:center; gap:12px; }
   .icon { font-size:30px; line-height:1; }
   .name { font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .hbtns { display:flex; gap:8px; }
+  .hbtns { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end; }
+  #q { width:200px; max-width:100%; padding:7px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--text); }
+  #q::-webkit-search-cancel-button { cursor:pointer; }
+  .ms { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; flex:none; }
+  .url.ext { color:var(--muted); margin-top:0; }
+  .gtoggle { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; margin-right:auto; background:none; border:0; padding:0; color:inherit; font:inherit; }
+  .gtoggle .chev { display:inline-block; width:14px; transition:transform .15s; color:var(--muted); }
+  .gtoggle.collapsed .chev { transform:rotate(-90deg); }
+  .gtoggle .cnt { font-weight:400; color:var(--muted); font-size:12px; letter-spacing:0; }
+  .ghead.over { outline:2px dashed var(--accent); outline-offset:4px; border-radius:6px; }
+  a.card.dragging { opacity:.35; }
+  a.card.drop-before { box-shadow:-5px 0 0 var(--accent); }
+  a.card.drop-after { box-shadow:5px 0 0 var(--accent); }
+  .grid.over { outline:2px dashed var(--accent); outline-offset:4px; border-radius:8px; }
+  a.card[draggable=true] { cursor:grab; }
   #refreshBtn { min-width:40px; font-variant-numeric:tabular-nums; } /* odpocet nesmi menit sirku tlacitka */
   .dot { width:10px; height:10px; border-radius:50%; background:var(--off); flex:none; transition:background .25s, box-shadow .25s; }
   /* bezici aplikace: zelena tecka jemne pulzuje (vlna se rozbiha a miji) */
@@ -107,6 +121,7 @@
       <div class="sub" id="subtitle"></div>
     </div>
     <div class="hbtns">
+      <input type="search" id="q" placeholder="Hledat (/)" aria-label="Hledat aplikace" autocomplete="off">
       <button class="ghost" id="refreshBtn" title="Zkontrolovat stav aplikací teď" aria-label="Zkontrolovat stav aplikací">↻</button>
       <button class="ghost" id="editBtn" title="Upravit seznam aplikací">✎ Upravit</button>
     </div>
@@ -116,6 +131,9 @@
     <strong>Režim úprav</strong>
     <button id="addBtn">+ Přidat aplikaci</button>
     <button class="ghost" id="titleBtn">Nadpis</button>
+    <button class="ghost" id="exportBtn" title="Stáhne seznam aplikací (včetně skrytých) jako JSON">Export</button>
+    <button class="ghost" id="importBtn" title="Načte seznam aplikací ze souboru JSON">Import</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
     <button class="ghost" id="doneBtn">Hotovo</button>
     <button class="ghost" id="logoutBtn">Odhlásit</button>
   </div>
@@ -397,21 +415,35 @@ function openForm({ title, text, fields = [], okText = 'Uložit', danger = false
 const STATUS_EVERY_MS = 5000; // jak casto se stav kontroluje, pokud je stranka videt
 const PROBE_TIMEOUT_MS = 2500;
 
+// vraci dobu odezvy v ms, nebo -1 pri nedostupnosti
 function probeOnce(url) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   const sep = url.includes('?') ? '&' : '?';
+  const t0 = performance.now();
   // cache-busting parametr + no-store: odpoved ani spojeni se nesmi vzit z cache
   return fetch(url + sep + '_=' + Date.now(), { mode: 'no-cors', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: ctrl.signal })
-    .then(() => true, () => false)
+    .then(() => performance.now() - t0, () => -1)
     .finally(() => clearTimeout(t));
 }
 
 // jeden opakovany pokus po 0,3 s, aby tecka pri kratkem vypadku zbytecne neblikala
 async function probe(url) {
-  if (await probeOnce(url)) return true;
+  const first = await probeOnce(url);
+  if (first >= 0) return first;
   await new Promise((r) => setTimeout(r, 300));
   return probeOnce(url);
+}
+
+const fmtMs = (ms) => (ms < 1000 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+// posledni zname stavy podle adresy: po prekresleni (hledani, sbaleni skupiny) se tecky neresetuji na seda
+const statusCache = new Map(); // url -> { ms, at }
+function applyStatus(c, st) {
+  const ok = st.ms >= 0;
+  c.dot.className = 'dot ' + (ok ? 'on' : 'off');
+  c.ms.textContent = ok ? fmtMs(st.ms) : '';
+  c.dot.title = `${ok ? `Běží · odezva ${fmtMs(st.ms)}` : 'Nedostupná'} · zkontrolováno ${new Date(st.at).toLocaleTimeString('cs-CZ')}`;
 }
 
 let checking = false;
@@ -420,9 +452,9 @@ async function checkAll() {
   checking = true;
   try {
     await Promise.all(cards.filter((c) => c.check && isHttp(c.url)).map(async (c) => {
-      const ok = await probe(c.url);
-      c.dot.className = 'dot ' + (ok ? 'on' : 'off');
-      c.dot.title = `${ok ? 'Běží' : 'Nedostupná'} · zkontrolováno ${new Date().toLocaleTimeString('cs-CZ')}`;
+      const st = { ms: await probe(c.url), at: Date.now() };
+      statusCache.set(c.url, st);
+      applyStatus(c, st);
     }));
   } finally { checking = false; }
 }
@@ -460,29 +492,113 @@ function btn(label, cls, onClick) {
   return b;
 }
 
+// --- adresy: domaci a externi ---
+// Pri otevreni z domaci site (localhost, soukrome IP, *.local/*.lan/*.home, jednoslovny nazev) se pouzije "url",
+// jinak (verejny nazev nebo IP) "urlExternal", pokud je vyplnena.
+function isLocalHost(h) {
+  h = String(h || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h || h === 'localhost') return true;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.)/.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true; // IPv4 soukroma/lokalni
+  if (h === '::1' || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true; // IPv6 loopback, ULA, link-local
+  if (/\.(local|lan|home|internal|localdomain|home\.arpa)$/.test(h)) return true;
+  return !h.includes('.') && !h.includes(':'); // jednoslovny nazev (napr. "nas")
+}
+const IS_LOCAL = isLocalHost(HOST);
+const resolveUrl = (app, local = IS_LOCAL) => fill(!local && app.urlExternal ? app.urlExternal : app.url);
+
+// --- hledani a sbalovani skupin ---
+const fold = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+let query = '';
+const COLLAPSE_KEY = 'nasdash-collapsed';
+function loadCollapsed() {
+  try { const a = JSON.parse(localStorage.getItem(COLLAPSE_KEY)); return new Set(Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []); }
+  catch { return new Set(); } // localStorage nedostupny nebo poskozeny zaznam
+}
+const collapsed = loadCollapsed();
+function saveCollapsed() { try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* jen pro tuto relaci */ } }
+const matches = (app) => !query || fold([app.name, app.description, app.group, app.url, app.urlExternal].join(' ')).includes(fold(query));
+
+// --- tazeni karet v rezimu uprav ---
+const DRAG_TYPE = 'text/x-nasdash-index';
+const clearDropMarks = () => document.querySelectorAll('.drop-before, .drop-after, .over').forEach((el) => el.classList.remove('drop-before', 'drop-after', 'over'));
+
+// presun karty "from" pred/za kartu "targetIndex"; karta prevezme skupinu cile
+async function reorder(from, targetIndex, after) {
+  if (from === targetIndex) return;
+  try {
+    await save(withList((apps) => {
+      const target = apps[targetIndex];
+      const [moved] = apps.splice(from, 1);
+      const t = apps.indexOf(target);
+      apps.splice(after ? t + 1 : t, 0, { ...moved, group: target.group });
+      return apps;
+    }));
+    toast('Přesunuto');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// presun karty na zacatek nebo konec skupiny (pusteni na nadpis nebo na prazdne misto skupiny)
+async function reorderToGroup(from, group, atStart) {
+  try {
+    await save(withList((apps) => {
+      const [moved] = apps.splice(from, 1);
+      const idx = [];
+      apps.forEach((a, i) => { if ((a.group || '') === group) idx.push(i); });
+      const at = !idx.length ? apps.length : atStart ? idx[0] : idx[idx.length - 1] + 1;
+      apps.splice(at, 0, { ...moved, group });
+      return apps;
+    }));
+    toast('Přesunuto');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 function buildCard(app, index) {
-  const url = fill(app.url);
+  const url = resolveUrl(app);
   const a = document.createElement('a');
   a.className = 'card' + (app.visible === false ? ' is-hidden' : ''); // skryta karta je v rezimu uprav ztlumena
   a.rel = 'noopener';
-  if (editMode) { a.href = '#'; a.onclick = (e) => { e.preventDefault(); editApp(index); }; }
-  else a.href = isHttp(url) ? url : '#';
+  if (editMode) {
+    a.href = '#'; a.onclick = (e) => { e.preventDefault(); editApp(index); };
+    a.draggable = true;
+    a.addEventListener('dragstart', (e) => { e.dataTransfer.setData(DRAG_TYPE, String(index)); e.dataTransfer.effectAllowed = 'move'; a.classList.add('dragging'); });
+    a.addEventListener('dragend', () => { a.classList.remove('dragging'); clearDropMarks(); });
+    a.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = a.getBoundingClientRect(); const after = e.clientX - r.left > r.width / 2;
+      clearDropMarks(); a.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    a.addEventListener('dragleave', () => a.classList.remove('drop-before', 'drop-after'));
+    a.addEventListener('drop', (e) => {
+      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = a.getBoundingClientRect(); const after = e.clientX - r.left > r.width / 2;
+      const from = Number(e.dataTransfer.getData(DRAG_TYPE)); clearDropMarks();
+      if (Number.isInteger(from)) reorder(from, index, after);
+    });
+  } else a.href = isHttp(url) ? url : '#';
 
   const top = document.createElement('div'); top.className = 'top';
   const icon = document.createElement('div'); icon.className = 'icon'; icon.textContent = app.icon || '🔗';
   const name = document.createElement('div'); name.className = 'name'; name.textContent = app.name;
   const dot = document.createElement('span'); dot.className = 'dot'; dot.title = 'Stav neznámý';
+  const ms = document.createElement('span'); ms.className = 'ms';
   top.append(icon, name);
   if (app.visible === false) {
     const hid = document.createElement('span'); hid.className = 'hidbadge'; hid.textContent = 'Skrytá';
     hid.title = 'Běžní uživatelé tuto aplikaci nevidí';
     top.append(hid);
   }
-  if (app.check !== false) top.append(dot);
+  if (app.check !== false) top.append(ms, dot);
 
   const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = app.description || '';
   const link = document.createElement('div'); link.className = 'url'; link.textContent = url;
   a.append(top, desc, link);
+  if (editMode && app.urlExternal) {
+    const ext = document.createElement('div'); ext.className = 'url ext';
+    ext.textContent = `↗ externí: ${app.urlExternal}`;
+    a.append(ext);
+  }
 
   if (editMode) {
     const tools = document.createElement('div'); tools.className = 'tools';
@@ -495,11 +611,15 @@ function buildCard(app, index) {
     );
     a.append(tools);
   }
-  cards.push({ dot, url, check: app.check !== false });
+  const card = { dot, ms, url, check: app.check !== false };
+  cards.push(card);
+  const known = statusCache.get(url);
+  if (known && card.check) applyStatus(card, known); // posledni zname hodnoty, dokud nedobehne nova kontrola
   return a;
 }
 
-function render() {
+// skipProbe: pri hledani a sbalovani skupin se stav znovu nezjistuje (pouziji se posledni zname hodnoty)
+function render(skipProbe = false) {
   document.title = data.title || 'Domácí rozcestník';
   $('title').textContent = data.title || 'Domácí rozcestník';
   $('subtitle').textContent = data.subtitle || '';
@@ -510,7 +630,7 @@ function render() {
   cards = [];
 
   // bezny pohled (i prihlaseny mimo rezim uprav) ukazuje jen aplikace s visible != false; skryte vidi jen rezim uprav
-  const shown = (app) => editMode || app.visible !== false;
+  const shown = (app) => (editMode || app.visible !== false) && matches(app);
   const groups = new Map();
   data.apps.forEach((app, i) => {
     if (!shown(app)) return;
@@ -522,10 +642,28 @@ function render() {
   const order = [...groups.keys()];
   order.forEach((group, gi) => {
     const items = groups.get(group);
+    const isCollapsed = collapsed.has(group) && !query; // pri hledani se skupiny s vysledky vzdy rozbali
     if (group || editMode) {
       const head = document.createElement('div'); head.className = 'ghead';
       const h = document.createElement('h2'); h.textContent = group || 'Bez skupiny';
-      head.append(h);
+      const toggle = document.createElement('button');
+      toggle.type = 'button'; toggle.className = 'gtoggle' + (isCollapsed ? ' collapsed' : '');
+      toggle.setAttribute('aria-expanded', String(!isCollapsed));
+      toggle.title = isCollapsed ? 'Rozbalit skupinu' : 'Sbalit skupinu';
+      const chev = document.createElement('span'); chev.className = 'chev'; chev.textContent = '▾';
+      toggle.append(chev, h);
+      if (isCollapsed) { const cnt = document.createElement('span'); cnt.className = 'cnt'; cnt.textContent = `(${items.length})`; toggle.append(cnt); }
+      toggle.onclick = () => { if (collapsed.has(group)) collapsed.delete(group); else collapsed.add(group); saveCollapsed(); render(true); };
+      head.append(toggle);
+      if (editMode) {
+        head.addEventListener('dragover', (e) => { if (!e.dataTransfer.types.includes(DRAG_TYPE)) return; e.preventDefault(); clearDropMarks(); head.classList.add('over'); });
+        head.addEventListener('dragleave', () => head.classList.remove('over'));
+        head.addEventListener('drop', (e) => {
+          if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+          e.preventDefault(); const from = Number(e.dataTransfer.getData(DRAG_TYPE)); clearDropMarks();
+          if (Number.isInteger(from)) reorderToGroup(from, group, true); // pusteni na nadpis = na zacatek skupiny
+        });
+      }
       if (editMode) {
         const up = btn('↑', 'ghost', () => moveGroup(group, -1)); up.disabled = gi === 0; up.title = 'Posunout celou skupinu nahoru';
         const down = btn('↓', 'ghost', () => moveGroup(group, 1)); down.disabled = gi === order.length - 1; down.title = 'Posunout celou skupinu dolů';
@@ -534,8 +672,18 @@ function render() {
       }
       content.append(head);
     }
+    if (isCollapsed) return; // sbalena skupina ukazuje jen nadpis s poctem
     const grid = document.createElement('div'); grid.className = 'grid';
     for (const { app, i } of items) grid.append(buildCard(app, i));
+    if (editMode) { // pusteni na volne misto skupiny = na jeji konec
+      grid.addEventListener('dragover', (e) => { if (!e.dataTransfer.types.includes(DRAG_TYPE)) return; e.preventDefault(); clearDropMarks(); grid.classList.add('over'); });
+      grid.addEventListener('dragleave', (e) => { if (e.target === grid) grid.classList.remove('over'); });
+      grid.addEventListener('drop', (e) => {
+        if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+        e.preventDefault(); const from = Number(e.dataTransfer.getData(DRAG_TYPE)); clearDropMarks();
+        if (Number.isInteger(from)) reorderToGroup(from, group, false);
+      });
+    }
     content.append(grid);
   });
 
@@ -545,15 +693,28 @@ function render() {
     add.onclick = (e) => { e.preventDefault(); addApp(); };
     grid.append(add); content.append(grid);
   }
-  if (!editMode && !data.apps.some(shown)) {
+  if (!data.apps.some(shown) && !(editMode && !query)) {
     const d = document.createElement('div'); d.className = 'err'; d.style.color = 'var(--muted)';
-    d.textContent = data.apps.length
-      ? 'Žádné aplikace nejsou zobrazené. Klikni na „Upravit“ a některou zobraz.'
-      : 'Zatím tu nejsou žádné aplikace. Klikni na „Upravit“ a přidej první.';
+    d.textContent = query
+      ? `Nic nenalezeno pro „${query}“.`
+      : data.apps.length
+        ? 'Žádné aplikace nejsou zobrazené. Klikni na „Upravit“ a některou zobraz.'
+        : 'Zatím tu nejsou žádné aplikace. Klikni na „Upravit“ a přidej první.';
     content.append(d);
   }
-  checkAll();
+  if (!skipProbe) checkAll();
 }
+
+// --- hledani: pole v hlavicce, klavesa / zaostri, Enter otevre prvni nalez, Esc smaze ---
+$('q').addEventListener('input', () => { query = $('q').value.trim(); render(true); });
+$('q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { const first = $('content').querySelector('a.card:not(.add)'); if (first) first.click(); }
+  else if (e.key === 'Escape') { $('q').value = ''; query = ''; render(true); $('q').blur(); }
+});
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (e.key === '/' && tag !== 'input' && tag !== 'textarea' && tag !== 'select' && !document.querySelector('dialog[open]')) { e.preventDefault(); $('q').focus(); }
+});
 
 // --- uprava ---
 // existujici skupiny v poradi prvniho vyskytu (bez prazdne)
@@ -603,6 +764,8 @@ const appFields = (a = {}, oldIndex = -1) => [
   { key: 'name', label: 'Název', value: a.name, required: true, maxLength: 60 },
   { key: 'description', label: 'Popis', value: a.description, maxLength: 300 },
   { key: 'url', label: 'URL', value: a.url, required: true, maxLength: 300, placeholder: 'http://{host}:3000', hint: 'Místo IP použij {host}, nahradí se adresou NASu.' },
+  { key: 'urlExternal', label: 'Externí adresa (volitelná)', value: a.urlExternal, maxLength: 300, placeholder: 'https://faktura.example.com',
+    hint: 'Použije se, když stránku otevřeš mimo domácí síť (veřejný název nebo IP). Bez ní se vždy použije hlavní adresa.' },
   { key: 'icon', label: 'Ikona (emoji)', value: a.icon, maxLength: 8, placeholder: '📦' },
   { key: 'group', label: 'Skupina', type: 'combo', value: a.group ?? '', maxLength: 40,
     options: existingGroups(), placeholder: 'Vyber ze seznamu nebo napiš novou' },
@@ -676,6 +839,68 @@ async function moveApp(i, dir) {
   if (j < 0 || j >= data.apps.length) return;
   try { await save(withApps((apps) => { [apps[i], apps[j]] = [apps[j], apps[i]]; })); }
   catch (err) { toast(err.message, 'error'); }
+}
+
+// --- export a import seznamu aplikaci (JSON) ---
+const buildExport = () => ({ title: data.title, subtitle: data.subtitle, exportedAt: new Date().toISOString(), apps: data.apps });
+
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(buildExport(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `nas-dashboard-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('Seznam aplikací exportován');
+};
+
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) await importFile(file);
+};
+
+// soubor z exportu (nebo obycejne pole aplikaci); server data pri ulozeni jeste validuje
+async function importFile(file) {
+  if (file.size > 1024 * 1024) { toast('Soubor je příliš velký (nejvýše 1 MB)', 'error'); return; }
+  let parsed;
+  try { parsed = JSON.parse(await file.text()); } catch { toast('Soubor není platný JSON', 'error'); return; }
+  const apps = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.apps) ? parsed.apps : null;
+  if (!apps || !apps.length) { toast('V souboru nejsou žádné aplikace', 'error'); return; }
+  if (!apps.every((a) => a && typeof a === 'object' && typeof a.name === 'string' && typeof a.url === 'string')) {
+    toast('Neplatný formát: každá aplikace musí mít název (name) a adresu (url)', 'error'); return;
+  }
+  const keyOf = (a) => `${a.name}|${a.url}`;
+  const have = new Set(data.apps.map(keyOf));
+  const fresh = apps.filter((a) => !have.has(keyOf(a)));
+  const hidden = apps.filter((a) => a.visible === false).length;
+  await openForm({
+    title: 'Import aplikací', okText: 'Importovat',
+    text: `Soubor obsahuje ${apps.length} aplikací${hidden ? ` (z toho ${hidden} skrytých)` : ''}.`,
+    fields: [{
+      key: 'mode', label: 'Jak importovat', type: 'select',
+      build: () => ({
+        options: [
+          { value: 0, label: `Přidat k existujícím (nových: ${fresh.length}, shodné se přeskočí)` },
+          { value: 1, label: `Nahradit celý seznam (${data.apps.length} stávajících se smaže)` },
+        ],
+        value: 0,
+      }),
+    }],
+    onSubmit: async ({ mode }) => {
+      const next = structuredClone(data);
+      if (mode === 1) {
+        next.apps = apps;
+        if (parsed && typeof parsed.title === 'string' && parsed.title.trim()) next.title = parsed.title;
+        if (parsed && typeof parsed.subtitle === 'string') next.subtitle = parsed.subtitle;
+      } else {
+        next.apps = [...data.apps, ...fresh];
+      }
+      await save(next);
+      toast(mode === 1 ? `Seznam nahrazen (${next.apps.length} aplikací)` : `Přidáno aplikací: ${fresh.length}`);
+    },
+  });
 }
 
 $('titleBtn').onclick = () => openForm({

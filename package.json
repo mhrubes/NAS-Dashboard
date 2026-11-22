@@ -1,6 +1,6 @@
 {
   "name": "nas-dashboard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Domaci rozcestnik s upravou seznamu aplikaci primo v prohlizeci",
   "main": "server.js",
   "scripts": {
