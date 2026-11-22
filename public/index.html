@@ -38,8 +38,18 @@
   .top { display:flex; align-items:center; gap:12px; }
   .icon { font-size:30px; line-height:1; }
   .name { font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .dot { width:10px; height:10px; border-radius:50%; background:var(--off); flex:none; }
-  .dot.on { background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .hbtns { display:flex; gap:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--off); flex:none; transition:background .25s, box-shadow .25s; }
+  /* bezici aplikace: zelena tecka jemne pulzuje (vlna se rozbiha a miji) */
+  .dot.on { background:var(--ok); box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); animation:pulse 2s ease-out infinite; }
+  @keyframes pulse {
+    0%   { box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); }
+    70%  { box-shadow:0 0 0 9px color-mix(in srgb, var(--ok) 0%, transparent); }
+    100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.on { animation:none; box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  }
   .dot.off { background:var(--bad); }
   .desc { color:var(--muted); font-size:14px; }
   .url { color:var(--accent); font-size:12px; word-break:break-all; margin-top:auto; }
@@ -90,7 +100,10 @@
       <h1 id="title">Domácí rozcestník</h1>
       <div class="sub" id="subtitle"></div>
     </div>
-    <button class="ghost" id="editBtn" title="Upravit seznam aplikací">✎ Upravit</button>
+    <div class="hbtns">
+      <button class="ghost" id="refreshBtn" title="Zkontrolovat stav aplikací teď" aria-label="Zkontrolovat stav aplikací">↻</button>
+      <button class="ghost" id="editBtn" title="Upravit seznam aplikací">✎ Upravit</button>
+    </div>
   </header>
 
   <div id="bar" hidden>
@@ -371,20 +384,38 @@ function openForm({ title, text, fields = [], okText = 'Uložit', danger = false
 }
 
 // --- dostupnost aplikaci ---
-function probe(url) {
+// Kazdy prohlizec zkousi spojeni primo na adresu aplikace (no-cors: staci, ze port odpovi). Zelena = port odpovida.
+const STATUS_EVERY_MS = 5000; // jak casto se stav kontroluje, pokud je stranka videt
+const PROBE_TIMEOUT_MS = 2500;
+
+function probeOnce(url) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 2500);
-  return fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  const sep = url.includes('?') ? '&' : '?';
+  // cache-busting parametr + no-store: odpoved ani spojeni se nesmi vzit z cache
+  return fetch(url + sep + '_=' + Date.now(), { mode: 'no-cors', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: ctrl.signal })
     .then(() => true, () => false)
     .finally(() => clearTimeout(t));
 }
 
+// jeden opakovany pokus po 0,3 s, aby tecka pri kratkem vypadku zbytecne neblikala
+async function probe(url) {
+  if (await probeOnce(url)) return true;
+  await new Promise((r) => setTimeout(r, 300));
+  return probeOnce(url);
+}
+
+let checking = false;
 async function checkAll() {
-  await Promise.all(cards.filter((c) => c.check && isHttp(c.url)).map(async (c) => {
-    const ok = await probe(c.url);
-    c.dot.className = 'dot ' + (ok ? 'on' : 'off');
-    c.dot.title = ok ? 'Běží' : 'Nedostupná';
-  }));
+  if (checking || document.hidden) return; // neprekryvat kontroly, na skrytou zalozku se neptat
+  checking = true;
+  try {
+    await Promise.all(cards.filter((c) => c.check && isHttp(c.url)).map(async (c) => {
+      const ok = await probe(c.url);
+      c.dot.className = 'dot ' + (ok ? 'on' : 'off');
+      c.dot.title = `${ok ? 'Běží' : 'Nedostupná'} · zkontrolováno ${new Date().toLocaleTimeString('cs-CZ')}`;
+    }));
+  } finally { checking = false; }
 }
 
 // --- vykresleni ---
@@ -635,7 +666,12 @@ async function init() {
   authed = !!me;
   if (me) startSession(me.timeoutSec, me.remainingSec);
   render();
-  setInterval(checkAll, 30000);
+  setInterval(checkAll, STATUS_EVERY_MS);
+  // hned po navratu na zalozku, do okna nebo po obnoveni site, ne az pri dalsim tiku
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkAll(); });
+  window.addEventListener('focus', checkAll);
+  window.addEventListener('online', checkAll);
+  $('refreshBtn').onclick = checkAll;
 }
 init();
 </script>
